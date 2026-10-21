@@ -63,6 +63,117 @@ def set_question_time(user_id, seconds):
     conn.commit()
     conn.close()
 
+QUIZZES = {
+    "math_easy": {
+        "title": "Математика — легко",
+        "questions": [
+            ("Сколько будет 2 + 2?", ["4", "5", "22"], 0),
+            ("Сколько будет 10 − 3?", ["6", "7", "8"], 1),
+            ("Сколько будет 3 × 3?", ["6", "9", "12"], 1),
+            ("Чему равна половина от 20?", ["5", "10", "15"], 1),
+            ("Сколько будет 15 + 6?", ["20", "21", "22"], 1),
+        ],
+    },
+    "math_hard": {
+        "title": "Математика — сложно",
+        "questions": [
+            ("Сколько будет 5 × 2?", ["10", "5", "25"], 0),
+            ("Чему равно 12²?", ["124", "144", "122"], 1),
+            ("Сколько будет 81 ÷ 9?", ["8", "9", "10"], 1),
+            ("Реши уравнение: 3x = 27", ["7", "8", "9"], 2),
+            ("Сколько будет 7 × 8 − 6?", ["50", "56", "62"], 0),
+        ],
+    },
+    "capitals_easy": {
+        "title": "Столицы стран — легко",
+        "questions": [
+            ("Какая столица Франции?", ["Париж", "Рим", "Берлин"], 0),
+            ("Какая столица Италии?", ["Мадрид", "Рим", "Лиссабон"], 1),
+            ("Какая столица Германии?", ["Вена", "Прага", "Берлин"], 2),
+            ("Какая столица Японии?", ["Токио", "Пекин", "Сеул"], 0),
+            ("Какая столица Канады?", ["Торонто", "Оттава", "Ванкувер"], 1),
+        ],
+    },
+    "capitals_hard": {
+        "title": "Столицы стран — сложно",
+        "questions": [
+            ("Какая столица Андорры?", ["Андорра-ла-Велья", "Монако", "Барселона"], 0),
+            ("Какая столица Бутана?", ["Катманду", "Тхимпху", "Дакка"], 1),
+            ("Какая столица Молдовы?", ["Кишинёв", "Бухарест", "София"], 0),
+            ("Какая столица Мадагаскара?", ["Антананариву", "Мапуту", "Лусака"], 0),
+            ("Какая столица Словении?", ["Загреб", "Любляна", "Братислава"], 1),
+        ],
+    },
+    "flags": {
+        "title": "Флаги стран",
+        "questions": [
+            ("Какой флаг у Андорры?", ["🇦🇩", "🇲🇨", "🇪🇸"], 0),
+            ("Какой флаг у Японии?", ["🇨🇳", "🇯🇵", "🇰🇷"], 1),
+            ("Какой флаг у Бразилии?", ["🇦🇷", "🇵🇹", "🇧🇷"], 2),
+            ("Какой флаг у Канады?", ["🇨🇦", "🇺🇸", "🇬🇧"], 0),
+            ("Какой флаг у Греции?", ["🇮🇹", "🇬🇷", "🇫🇮"], 1),
+        ],
+    },
+}
+
+active_quizzes = {}
+
+def finish_quiz(chat_id, user_id, quiz_state):
+    active_quizzes.pop((chat_id, user_id), None)
+    quiz_key = quiz_state["quiz_key"]
+    question_count = len(QUIZZES[quiz_key]["questions"])
+    bot.send_message(
+        chat_id,
+        f"Викторина «{QUIZZES[quiz_key]['title']}» завершена! "
+        f"Правильных ответов: {quiz_state['score']} из {question_count}.",
+    )
+
+def send_quiz_question(chat_id, user_id, quiz_state):
+    quiz_key = quiz_state["quiz_key"]
+    questions = QUIZZES[quiz_key]["questions"]
+    question_index = quiz_state["index"]
+    if question_index >= len(questions):
+        finish_quiz(chat_id, user_id, quiz_state)
+        return
+
+    text, options, _ = questions[question_index]
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for option_index, option in enumerate(options):
+        markup.add(types.InlineKeyboardButton(
+            option, callback_data=f"a|{quiz_key}|{question_index}|{option_index}"
+        ))
+    seconds = get_question_time(user_id)
+    message = bot.send_message(
+        chat_id,
+        f"{question_index + 1}/{len(questions)}. {text}\n\n⏱ На ответ: {seconds} сек.",
+        reply_markup=markup,
+    )
+    quiz_state["message_id"] = message.message_id
+    key = (message.chat.id, message.message_id)
+    timer = threading.Timer(
+        seconds, expire_question, args=(message.chat.id, message.message_id, user_id)
+    )
+    timer.daemon = True
+    with active_questions_lock:
+        active_questions[key] = {
+            "user_id": user_id,
+            "timer": timer,
+            "quiz_key": quiz_key,
+            "question_index": question_index,
+        }
+    timer.start()
+
+def advance_quiz(chat_id, user_id, message_id, timed_out=False, is_correct=False):
+    quiz_state = active_quizzes.get((chat_id, user_id))
+    if not quiz_state or quiz_state.get("message_id") != message_id:
+        return
+    if timed_out:
+        bot.send_message(chat_id, "⏰ Время вышло! Переходим к следующему вопросу.")
+    elif is_correct:
+        quiz_state["score"] += 1
+    quiz_state["index"] += 1
+    send_quiz_question(chat_id, user_id, quiz_state)
+
 def expire_question(chat_id, message_id, user_id):
     key = (chat_id, message_id)
     with active_questions_lock:
@@ -75,44 +186,44 @@ def expire_question(chat_id, message_id, user_id):
         bot.edit_message_reply_markup(chat_id, message_id, reply_markup=None)
     except Exception:
         pass
-    bot.send_message(chat_id, "⏰ Время вышло! Ответить на этот вопрос уже нельзя.")
+    advance_quiz(chat_id, user_id, message_id, timed_out=True)
 
-def send_question(call, text, markup):
-    seconds = get_question_time(call.from_user.id)
-    message = bot.send_message(
-        call.message.chat.id,
-        f"{text}\n\n⏱ На ответ: {seconds} сек.",
-        reply_markup=markup,
-    )
-    key = (message.chat.id, message.message_id)
-    timer = threading.Timer(
-        seconds, expire_question, args=(message.chat.id, message.message_id, call.from_user.id)
-    )
-    timer.daemon = True
-    with active_questions_lock:
-        active_questions[key] = {"user_id": call.from_user.id, "timer": timer}
-    timer.start()
+def start_quiz(call, quiz_key):
+    quiz_state = {"quiz_key": quiz_key, "index": 0, "score": 0}
+    active_quizzes[(call.message.chat.id, call.from_user.id)] = quiz_state
+    send_quiz_question(call.message.chat.id, call.from_user.id, quiz_state)
 
-def check_question_answer(call):
+def handle_quiz_answer(call):
+    try:
+        _, quiz_key, question_index, option_index = call.data.split("|")
+        question_index = int(question_index)
+        option_index = int(option_index)
+    except (ValueError, TypeError):
+        return False
+
     key = (call.message.chat.id, call.message.message_id)
     with active_questions_lock:
-        state = active_questions.get(key)
-        if not state:
+        question_state = active_questions.get(key)
+        if (not question_state or question_state["user_id"] != call.from_user.id
+                or question_state["quiz_key"] != quiz_key
+                or question_state["question_index"] != question_index):
             return False
-        if state["user_id"] != call.from_user.id:
+        quiz_state = active_quizzes.get((call.message.chat.id, call.from_user.id))
+        if not quiz_state or quiz_state.get("message_id") != call.message.message_id:
             return False
-        if call.data in CORRECT_ANSWERS:
-            active_questions.pop(key)
-            state["timer"].cancel()
-    return True
+        active_questions.pop(key)
+        question_state["timer"].cancel()
 
-CORRECT_ANSWERS = {
-    "math_easy_1_4", "math_hard_2_10", "paris", "andorra", "andorra_flag"
-}
-QUESTION_ANSWERS = CORRECT_ANSWERS | {
-    "math_easy_1_5", "math_easy_1_22", "math_hard_2_5", "rome", "berlin",
-    "monako", "barcelona", "monako_flag", "spain_flag"
-}
+    question = QUIZZES[quiz_key]["questions"][question_index]
+    if option_index < 0 or option_index >= len(question[1]):
+        return False
+    is_correct = option_index == question[2]
+    category_id = list(QUIZZES).index(quiz_key) + 1
+    save_answer(call, category_id * 1000 + question_index * 10 + option_index, is_correct)
+    bot.answer_callback_query(call.id, "Верно!" if is_correct else "Неверно")
+    advance_quiz(call.message.chat.id, call.from_user.id, call.message.message_id,
+                 is_correct=is_correct)
+    return True
 
 def save_answer(call, answer_id, is_correct):
     user = call.from_user
@@ -177,12 +288,13 @@ def welcome(message):
 # Все нажатия кнопок
 @bot.callback_query_handler(func=lambda call: True)
 def on_click(call):
-    if call.data in QUESTION_ANSWERS and not check_question_answer(call):
-        bot.answer_callback_query(
-            call.id,
-            "Время вышло, вопрос закрыт или отвечать может только начавший викторину.",
-            show_alert=True,
-        )
+    if call.data.startswith("a|"):
+        if not handle_quiz_answer(call):
+            bot.answer_callback_query(
+                call.id,
+                "Время вышло, вопрос закрыт или отвечать может только начавший викторину.",
+                show_alert=True,
+            )
         return
 
     if call.data == "math":
@@ -192,94 +304,19 @@ def on_click(call):
             types.InlineKeyboardButton("Сложно", callback_data="math_hard"),
         )
         bot.send_message(call.message.chat.id, "Выбери уровень сложности", reply_markup=markup)
-    elif call.data == "math_easy":
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("4", callback_data="math_easy_1_4"),
-            types.InlineKeyboardButton("5", callback_data="math_easy_1_5"),
-            types.InlineKeyboardButton("22", callback_data="math_easy_1_22"),
-        )
-        send_question(call, "1. Сколько будет 2 + 2?", markup)
-    elif call.data == "math_hard":
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("10", callback_data="math_hard_2_10"),
-            types.InlineKeyboardButton("5", callback_data="math_hard_2_5"),
-        )
-        send_question(call, "2. Сколько будет 5 × 2?", markup)
-    elif call.data == "math_easy_1_4":
-        save_answer(call, 4, True)
-        bot.send_message(call.message.chat.id, "Верно! Ты прошёл викторину по математике.")
-    elif call.data == "math_easy_1_5":
-        save_answer(call, 5, False)
-        bot.send_message(call.message.chat.id, "Неверно. Попробуй ещё раз")
-    elif call.data == "math_easy_1_22":
-        save_answer(call, 22, False)
-        bot.send_message(call.message.chat.id, "Неверно. Попробуй ещё раз")
-    elif call.data == "math_hard_2_10":
-        save_answer(call, 10, True)
-        bot.send_message(call.message.chat.id, "Верно! Ты прошёл викторину по математике.")
-    elif call.data == "math_hard_2_5":
-        save_answer(call, 5, False)
-        bot.send_message(call.message.chat.id, "Неверно. Попробуй ещё раз")
-    if call.data == "capitals":
+    elif call.data in ("math_easy", "math_hard"):
+        start_quiz(call, call.data)
+    elif call.data == "capitals":
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
             types.InlineKeyboardButton("Легко", callback_data="capitals_easy"),
             types.InlineKeyboardButton("Сложно", callback_data="capitals_hard"),
         )
         bot.send_message(call.message.chat.id, "Выбери уровень сложности", reply_markup=markup)
-    elif call.data == "capitals_easy":
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("Париж", callback_data="paris"),
-            types.InlineKeyboardButton("Рим", callback_data="rome"),
-            types.InlineKeyboardButton("Берлин", callback_data="berlin"),
-        )
-        send_question(call, "1. Какая столица Франции?", markup)
-    elif call.data == "capitals_hard":
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("Андорра-ла-Велья", callback_data="andorra"),
-            types.InlineKeyboardButton("Монако", callback_data="monako"),
-            types.InlineKeyboardButton("Барселона", callback_data="barcelona"),
-        )
-        send_question(call, "2. Какая столица Андорры?", markup)
-    elif call.data == "paris":
-        save_answer(call, 4, True)
-        bot.send_message(call.message.chat.id, "Верно! Ты прошёл викторину по столицам стран.")
-    elif call.data == "rome":
-        save_answer(call, 5, False)
-        bot.send_message(call.message.chat.id, "Неверно. Попробуй ещё раз")
-    elif call.data == "berlin":
-        save_answer(call, 6, False)
-        bot.send_message(call.message.chat.id, "Неверно. Попробуй ещё раз")
-    elif call.data == "andorra":
-        save_answer(call, 7, True)
-        bot.send_message(call.message.chat.id, "Верно! Ты прошёл викторину по столицам стран.")
-    elif call.data == "monako":
-        save_answer(call, 8, False)
-        bot.send_message(call.message.chat.id, "Неверно. Попробуй ещё раз")
-    elif call.data == "barcelona":
-        save_answer(call, 9, False)
-        bot.send_message(call.message.chat.id, "Неверно. Попробуй ещё раз")
+    elif call.data in ("capitals_easy", "capitals_hard"):
+        start_quiz(call, call.data)
     elif call.data == "flags":
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("🇦🇩", callback_data="andorra_flag"),
-            types.InlineKeyboardButton("🇲🇨", callback_data="monako_flag"),
-            types.InlineKeyboardButton("🇪🇸", callback_data="spain_flag"),
-        )
-        send_question(call, "1. Какой флаг у Андорры?", markup)
-    elif call.data == "andorra_flag":
-        save_answer(call, 11, True)
-        bot.send_message(call.message.chat.id, "Верно! Ты прошёл викторину по столицам стран.")
-    elif call.data == "monako_flag":
-        save_answer(call, 12, False)
-        bot.send_message(call.message.chat.id, "Неверно. Попробуй ещё раз")
-    elif call.data == "spain_flag":
-        save_answer(call, 13, False)
-        bot.send_message(call.message.chat.id, "Неверно. Попробуй ещё раз")
+        start_quiz(call, "flags")
     elif call.data == "leaderboard":
         send_leaderboard(call.message.chat.id)
     elif call.data == "settings":
