@@ -114,6 +114,16 @@ QUIZZES = {
             ("Какой флаг у Греции?", ["🇮🇹", "🇬🇷", "🇫🇮"], 1),
         ],
     },
+    "history": {
+        "title": "История",
+        "questions": [
+            ("В каком году началась Вторая мировая война?", ["1939", "1941", "1945"], 0),
+            ("Кто был первым президентом США?", ["Джордж Вашингтон", "Томас Джефферсон", "Джон Адамс"], 0),
+            ("В каком году была подписана Махачкальская конвенция?", ["1920", "1922", "1924"], 1),
+            ("В каком году началась Отечественная война?", ["1939", "1941", "1945"], 1),
+            ("Кто был лидером Советского Союза во время Второй мировой войны?", ["Иосиф Сталин", "Владимир Ленин", "Никита Хрущёв"], 0)
+        ],
+    },
 }
 
 active_quizzes = {}
@@ -276,6 +286,7 @@ def welcome(message):
         types.InlineKeyboardButton("Математика", callback_data="math"),
         types.InlineKeyboardButton("Столицы стран", callback_data="capitals"),
         types.InlineKeyboardButton("Флаги стран", callback_data="flags"),
+        types.InlineKeyboardButton("История", callback_data="history"),
         types.InlineKeyboardButton("Таблица лидеров", callback_data="leaderboard"),
         types.InlineKeyboardButton("Настройки", callback_data="settings"),
     )
@@ -317,6 +328,8 @@ def on_click(call):
         start_quiz(call, call.data)
     elif call.data == "flags":
         start_quiz(call, "flags")
+    elif call.data == "history":
+        start_quiz(call, "history")
     elif call.data == "leaderboard":
         send_leaderboard(call.message.chat.id)
     elif call.data == "settings":
